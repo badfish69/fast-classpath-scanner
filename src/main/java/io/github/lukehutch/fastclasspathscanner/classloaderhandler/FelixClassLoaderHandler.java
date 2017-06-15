@@ -28,11 +28,12 @@
  */
 package io.github.lukehutch.fastclasspathscanner.classloaderhandler;
 
+import java.io.File;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Map;
 
 import io.github.lukehutch.fastclasspathscanner.scanner.ClasspathFinder;
 import io.github.lukehutch.fastclasspathscanner.utils.LogNode;
@@ -59,7 +60,8 @@ public class FelixClassLoaderHandler implements ClassLoaderHandler {
             throws Exception {
         final List<ClassLoader> classLoaders = Arrays.asList(classLoader);
         for (Class<?> c = classLoader.getClass(); c != null; c = c.getSuperclass()) {
-            if ("org.apache.felix.framework.BundleWiringImpl$BundleClassLoaderJava5".equals(c.getName())) {
+            if ("org.apache.felix.framework.BundleWiringImpl$BundleClassLoaderJava5".equals(c.getName()) ||
+                "org.apache.felix.framework.BundleWiringImpl$BundleClassLoader".equals(c.getName())) {
                 // Type: BundleImpl
                 final Object m_wiring = ReflectionUtils.getFieldVal(classLoader, "m_wiring");
                 // Type: Bundle
@@ -69,14 +71,18 @@ public class FelixClassLoaderHandler implements ClassLoaderHandler {
                 final Map<String, Map<?, ?>> bundleHeaders = (Map<String, Map<?, ?>>) ReflectionUtils
                         .getFieldVal(bundle, "m_cachedHeaders");
 
-                final Object bundlefile = ReflectionUtils.getFieldVal(bundle, "m_archive");
-
-                // Should be a valid jar (should start with "file:/" and end with ".jar")
-                final Object bundlefileLocation = ReflectionUtils.getFieldVal(bundlefile, "m_originalLocation");
+                // Bundles are backed by a BundleArchive
+                final Object bundleArchive = ReflectionUtils.getFieldVal(bundle, "m_archive");
+                // Which contain one or more BundleArchiveRevision (we want the current one)
+                final Object bundleArchiveRevision = ReflectionUtils.invokeMethod(bundleArchive,"getCurrentRevision");
+                // Get the contents (JarContent)
+                final Object bundleContent = ReflectionUtils.invokeMethod(bundleArchiveRevision,"getContent");
+                // Finally get the underlying File object
+                final File bundleArchiveFile = (File)ReflectionUtils.invokeMethod(bundleContent,"getFile");
 
                 if (bundleHeaders != null && !bundleHeaders.isEmpty()) {
                     // Add bundleFile
-                    final String bundleFile = (String) bundlefileLocation;
+                    final String bundleFile = bundleArchiveFile.toURI().toString();
                     classpathFinder.addClasspathElement(bundleFile, classLoaders, log);
 
                     // Should find one element only

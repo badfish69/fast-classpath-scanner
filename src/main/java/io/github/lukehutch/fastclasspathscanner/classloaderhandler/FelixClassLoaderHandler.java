@@ -30,10 +30,12 @@ package io.github.lukehutch.fastclasspathscanner.classloaderhandler;
 
 import java.io.File;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map.Entry;
 import java.util.Map;
+import java.util.Set;
 
 import io.github.lukehutch.fastclasspathscanner.scanner.ClasspathFinder;
 import io.github.lukehutch.fastclasspathscanner.utils.LogNode;
@@ -49,11 +51,7 @@ import io.github.lukehutch.fastclasspathscanner.utils.ReflectionUtils;
  */
 public class FelixClassLoaderHandler implements ClassLoaderHandler {
 
-    private final String JAR_FILE_PREFIX = "jar:";
-
-    private final String JAR_FILE_DELIM = "!/";
-
-    private static final String BY_COMMA = ",";
+    final Set<Object> bundles = new HashSet<>();
 
     @Override
     public boolean handle(final ClassLoader classLoader, final ClasspathFinder classpathFinder, final LogNode log)
@@ -62,31 +60,64 @@ public class FelixClassLoaderHandler implements ClassLoaderHandler {
         for (Class<?> c = classLoader.getClass(); c != null; c = c.getSuperclass()) {
             if ("org.apache.felix.framework.BundleWiringImpl$BundleClassLoaderJava5".equals(c.getName()) ||
                 "org.apache.felix.framework.BundleWiringImpl$BundleClassLoader".equals(c.getName())) {
-                // Type: BundleImpl
-                final Object bundle = ReflectionUtils.invokeMethod(classLoader, "getBundle");
-                // Bundles are backed by a BundleArchive
-                final Object bundleArchive = ReflectionUtils.invokeMethod(bundle, "getArchive");
-                // Which contain one or more BundleArchiveRevision (we want the current one)
-                final Object bundleArchiveRevision = ReflectionUtils.invokeMethod(bundleArchive,"getCurrentRevision");
-                // Get the contents (JarContent)
-                final Object bundleContent = ReflectionUtils.invokeMethod(bundleArchiveRevision,"getContent");
-                // Which we add to our element list
-                classpathFinder.addClasspathElement(getContentLocation(bundleContent), classLoaders, log);
 
-                // Now deal with any embedded content
-                final List embeddedContent = (List)ReflectionUtils.invokeMethod(bundleArchiveRevision,"getContentPath");
-                if (embeddedContent != null) {
-                    for (Object content : embeddedContent) {
-                        classpathFinder.addClasspathElement(getContentLocation(content), classLoaders, log);
+                // Get the wiring for the ClassLoader's bundle
+                final Object bundleWiring = ReflectionUtils.getFieldVal(classLoader, "m_wiring");
+                addBundle(bundleWiring, classLoaders, classpathFinder, log);
+
+                /*
+                 * Finally, deal with any other bundles we might be wired to.
+                 * Ideally we'd use the ScanSpec to narrow down the list of wires that we follow,
+                 * but it doesn't seem to be available to us :-(
+                 */
+                
+                final List requiredWires = (List)ReflectionUtils.invokeMethod(bundleWiring, "getRequiredWires", String.class, null);
+                if (requiredWires != null) {
+                    for (Object wire : requiredWires) {
+                        final Object provider = ReflectionUtils.invokeMethod(wire,"getProviderWiring");
+                        if (!bundles.contains(provider)) {
+                            addBundle(provider, classLoaders, classpathFinder, log);
+                        }
                     }
                 }
+
                 return true;
             }
         }
         return false;
     }
 
-    private String getContentLocation(Object content) throws Exception {
+    private void addBundle(final Object bundleWiring, final List<ClassLoader> classLoaders, final ClasspathFinder classpathFinder, final LogNode log) throws Exception {
+        // Track the bundles we've processed to prevent loops
+        bundles.add(bundleWiring);
+
+        // Get the revision for this wiring
+        final Object revision = ReflectionUtils.invokeMethod(bundleWiring,"getRevision");
+        // Get the contents
+        final Object content = ReflectionUtils.invokeMethod(revision,"getContent");
+        final String location = content != null ? getContentLocation(content) : null;
+        if (location != null) {
+            System.out.println("adding bundle: " + location);
+            // Add the bundle object
+            classpathFinder.addClasspathElement(location, classLoaders, log);
+
+            // And any embedded content
+            final List embeddedContent = (List)ReflectionUtils.invokeMethod(revision,"getContentPath");
+            if (embeddedContent != null) {
+                for (Object embedded : embeddedContent) {
+                    if (embedded != content) {
+                        final String embeddedLocation = embedded != null ? getContentLocation(embedded) : null;
+                        if (embeddedLocation != null) {
+                            System.out.println("adding embedded: " + embeddedLocation);
+                            classpathFinder.addClasspathElement(embeddedLocation, classLoaders, log);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private String getContentLocation(final Object content) throws Exception {
         final File file = (File)ReflectionUtils.invokeMethod(content,"getFile");
         return file != null ? file.toURI().toString() : null;
     }

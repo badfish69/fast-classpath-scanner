@@ -97,7 +97,6 @@ public class FelixClassLoaderHandler implements ClassLoaderHandler {
         final Object content = ReflectionUtils.invokeMethod(revision,"getContent");
         final String location = content != null ? getContentLocation(content) : null;
         if (location != null) {
-            System.out.println("adding bundle: " + location);
             // Add the bundle object
             classpathFinder.addClasspathElement(location, classLoaders, log);
 
@@ -108,7 +107,6 @@ public class FelixClassLoaderHandler implements ClassLoaderHandler {
                     if (embedded != content) {
                         final String embeddedLocation = embedded != null ? getContentLocation(embedded) : null;
                         if (embeddedLocation != null) {
-                            System.out.println("adding embedded: " + embeddedLocation);
                             classpathFinder.addClasspathElement(embeddedLocation, classLoaders, log);
                         }
                     }

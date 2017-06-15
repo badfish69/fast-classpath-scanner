@@ -63,56 +63,31 @@ public class FelixClassLoaderHandler implements ClassLoaderHandler {
             if ("org.apache.felix.framework.BundleWiringImpl$BundleClassLoaderJava5".equals(c.getName()) ||
                 "org.apache.felix.framework.BundleWiringImpl$BundleClassLoader".equals(c.getName())) {
                 // Type: BundleImpl
-                final Object m_wiring = ReflectionUtils.getFieldVal(classLoader, "m_wiring");
-                // Type: Bundle
-                final Object bundle = ReflectionUtils.invokeMethod(m_wiring, "getBundle");
-
-                @SuppressWarnings("unchecked")
-                final Map<String, Map<?, ?>> bundleHeaders = (Map<String, Map<?, ?>>) ReflectionUtils
-                        .getFieldVal(bundle, "m_cachedHeaders");
-
+                final Object bundle = ReflectionUtils.invokeMethod(classLoader, "getBundle");
                 // Bundles are backed by a BundleArchive
-                final Object bundleArchive = ReflectionUtils.getFieldVal(bundle, "m_archive");
+                final Object bundleArchive = ReflectionUtils.invokeMethod(bundle, "getArchive");
                 // Which contain one or more BundleArchiveRevision (we want the current one)
                 final Object bundleArchiveRevision = ReflectionUtils.invokeMethod(bundleArchive,"getCurrentRevision");
                 // Get the contents (JarContent)
                 final Object bundleContent = ReflectionUtils.invokeMethod(bundleArchiveRevision,"getContent");
-                // Finally get the underlying File object
-                final File bundleArchiveFile = (File)ReflectionUtils.invokeMethod(bundleContent,"getFile");
+                // Which we add to our element list
+                classpathFinder.addClasspathElement(getContentLocation(bundleContent), classLoaders, log);
 
-                if (bundleHeaders != null && !bundleHeaders.isEmpty()) {
-                    // Add bundleFile
-                    final String bundleFile = bundleArchiveFile.toURI().toString();
-                    classpathFinder.addClasspathElement(bundleFile, classLoaders, log);
-
-                    // Should find one element only
-                    final Iterator<Entry<String, Map<?, ?>>> it = bundleHeaders.entrySet().iterator();
-                    if (it.hasNext()) {
-                        final Entry<String, Map<?, ?>> pair = it.next();
-                        final Map<?, ?> stringMap = pair.getValue();
-                        // Type: String
-                        final String classpath = (String) stringMap.get("Bundle-Classpath");
-                        // If we have multiple jars in classpath, add them all
-                        if (classpath != null) {
-                            final String[] splitJars = classpath.split(BY_COMMA);
-                            for (int i = 0; i < splitJars.length; i++) {
-                                // Should be something like this:
-                                // jar:file:/path/myBundleFile.jar!/v4-sdk-schema-1.4.0-develop.v12.jar
-                                if (!splitJars[i].isEmpty()) {
-                                    final String jarPath = JAR_FILE_PREFIX + bundleFile + JAR_FILE_DELIM
-                                            + splitJars[i];
-                                    classpathFinder.addClasspathElement(jarPath, classLoaders, log);
-                                }
-                            }
-                        } else {
-                            classpathFinder.addClasspathElement(bundleFile.replace("reference:", JAR_FILE_PREFIX),
-                                    classLoaders, log);
-                        }
+                // Now deal with any embedded content
+                final List embeddedContent = (List)ReflectionUtils.invokeMethod(bundleArchiveRevision,"getContentPath");
+                if (embeddedContent != null) {
+                    for (Object content : embeddedContent) {
+                        classpathFinder.addClasspathElement(getContentLocation(content), classLoaders, log);
                     }
-                    return true;
                 }
+                return true;
             }
         }
         return false;
+    }
+
+    private String getContentLocation(Object content) throws Exception {
+        final File file = (File)ReflectionUtils.invokeMethod(content,"getFile");
+        return file != null ? file.toURI().toString() : null;
     }
 }
